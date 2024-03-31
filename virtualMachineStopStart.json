@@ -1,0 +1,304 @@
+{
+    "definition": {
+        "$schema": "https://schema.management.azure.com/providers/Microsoft.Logic/schemas/2016-06-01/workflowdefinition.json#",
+        "actions": {
+            "Filter_everything_but_the_VMs_we_are_managing": {
+                "inputs": {
+                    "from": "@body('Get_a_list_of_all_resources_tagged_to_be_managed')['value']",
+                    "where": "@equals(item()['type'],'Microsoft.Compute/virtualMachines')"
+                },
+                "runAfter": {
+                    "Get_a_list_of_all_resources_tagged_to_be_managed": [
+                        "Succeeded"
+                    ]
+                },
+                "type": "Query"
+            },
+            "For_Each_VM": {
+                "actions": {
+                    "Filter_just_the_status_about_the_PowerState": {
+                        "inputs": {
+                            "from": "@body('Get_some_information_on_the_Virtual_Machine')['statuses']",
+                            "where": "@contains(item()['code'],'PowerState')"
+                        },
+                        "runAfter": {
+                            "Get_some_information_on_the_Virtual_Machine": [
+                                "Succeeded"
+                            ]
+                        },
+                        "type": "Query"
+                    },
+                    "For_each_PowerState_code": {
+                        "actions": {
+                            "Condition": {
+                                "actions": {
+                                    "Start_Virtual_Machine": {
+                                        "inputs": {
+                                            "authentication": {
+                                                "identity": "@{parameters('managedId')}",
+                                                "type": "ManagedServiceIdentity"
+                                            },
+                                            "method": "POST",
+                                            "uri": "https://management.azure.com@{items('For_Each_VM')['id']}/start?api-version=2024-03-01"
+                                        },
+                                        "runtimeConfiguration": {
+                                            "contentTransfer": {
+                                                "transferMode": "Chunked"
+                                            }
+                                        },
+                                        "type": "Http"
+                                    }
+                                },
+                                "else": {
+                                    "actions": {
+                                        "Deallocate_Virtual_Machine": {
+                                            "inputs": {
+                                                "authentication": {
+                                                    "identity": "@{parameters('managedId')}",
+                                                    "type": "ManagedServiceIdentity"
+                                                },
+                                                "method": "POST",
+                                                "uri": "https://management.azure.com@{items('For_Each_VM')['id']}/deallocate?api-version=2024-03-01"
+                                            },
+                                            "runtimeConfiguration": {
+                                                "contentTransfer": {
+                                                    "transferMode": "Chunked"
+                                                }
+                                            },
+                                            "type": "Http"
+                                        }
+                                    }
+                                },
+                                "expression": {
+                                    "and": [
+                                        {
+                                            "equals": [
+                                                "@items('For_each_PowerState_code')['code']",
+                                                "PowerState/deallocated"
+                                            ]
+                                        }
+                                    ]
+                                },
+                                "type": "If"
+                            }
+                        },
+                        "foreach": "@outputs('Process_just_the_VMs_power_state')['body']",
+                        "runAfter": {
+                            "Process_just_the_VMs_power_state": [
+                                "Succeeded"
+                            ]
+                        },
+                        "type": "Foreach"
+                    },
+                    "Get_some_information_on_the_Virtual_Machine": {
+                        "inputs": {
+                            "authentication": {
+                                "identity": "@{parameters('managedId')}",
+                                "type": "ManagedServiceIdentity"
+                            },
+                            "method": "GET",
+                            "uri": "https://management.azure.com@{items('For_Each_VM')['id']}/instanceView?api-version=2024-03-01"
+                        },
+                        "runtimeConfiguration": {
+                            "contentTransfer": {
+                                "transferMode": "Chunked"
+                            }
+                        },
+                        "type": "Http"
+                    },
+                    "Process_just_the_VMs_power_state": {
+                        "inputs": {
+                            "content": "@body('Filter_just_the_status_about_the_PowerState')",
+                            "schema": {
+                                "items": {
+                                    "properties": {
+                                        "code": {
+                                            "type": "string"
+                                        },
+                                        "displayStatus": {
+                                            "type": "string"
+                                        },
+                                        "level": {
+                                            "type": "string"
+                                        }
+                                    },
+                                    "required": [
+                                        "code",
+                                        "level",
+                                        "displayStatus"
+                                    ],
+                                    "type": "object"
+                                },
+                                "type": "array"
+                            }
+                        },
+                        "runAfter": {
+                            "Filter_just_the_status_about_the_PowerState": [
+                                "Succeeded"
+                            ]
+                        },
+                        "type": "ParseJson"
+                    }
+                },
+                "foreach": "@body('Process_just_the_VMs')",
+                "runAfter": {
+                    "Process_just_the_VMs": [
+                        "Succeeded"
+                    ]
+                },
+                "type": "Foreach"
+            },
+            "Get_a_list_of_all_resources_tagged_to_be_managed": {
+                "inputs": {
+                    "authentication": {
+                        "identity": "@{parameters('managedId')}",
+                        "type": "ManagedServiceIdentity"
+                    },
+                    "method": "GET",
+                    "uri": "https://management.azure.com/subscriptions/@{parameters('subscriptionId')}/resources?api-version=2021-04-01&$filter=tagName eq '@{parameters('tagName')}' and tagValue eq '@{parameters('tagValue')}'"
+                },
+                "runAfter": {},
+                "runtimeConfiguration": {
+                    "contentTransfer": {
+                        "transferMode": "Chunked"
+                    }
+                },
+                "type": "Http"
+            },
+            "Process_just_the_VMs": {
+                "inputs": {
+                    "content": "@body('Filter_everything_but_the_VMs_we_are_managing')",
+                    "schema": {
+                        "items": {
+                            "properties": {
+                                "id": {
+                                    "type": "string"
+                                },
+                                "kind": {
+                                    "type": "string"
+                                },
+                                "location": {
+                                    "type": "string"
+                                },
+                                "managedBy": {
+                                    "type": "string"
+                                },
+                                "name": {
+                                    "type": "string"
+                                },
+                                "tags": {
+                                    "properties": {
+                                        "scheduledVMPowerOnOff": {
+                                            "type": "string"
+                                        }
+                                    },
+                                    "type": "object"
+                                },
+                                "type": {
+                                    "type": "string"
+                                }
+                            },
+                            "required": [
+                                "id",
+                                "name",
+                                "type",
+                                "kind",
+                                "managedBy",
+                                "location",
+                                "tags"
+                            ],
+                            "type": "object"
+                        },
+                        "type": "array"
+                    }
+                },
+                "runAfter": {
+                    "Filter_everything_but_the_VMs_we_are_managing": [
+                        "Succeeded"
+                    ]
+                },
+                "runtimeConfiguration": {
+                },
+                "type": "ParseJson"
+            }
+        },
+        "contentVersion": "1.0.0.0",
+        "outputs": {},
+        "parameters": {
+            "$connections": {
+                "defaultValue": {},
+                "type": "Object"
+            },
+            "managedId": {
+                "defaultValue": "[REPLACE WITH THE FULL ID OF YOUR MANAGED IDENTITY]",
+                "type": "String"
+            },
+            "subscriptionId": {
+                "defaultValue": "[REPLACE WITH YOUR SUBSCRIPTION ID]",
+                "type": "String"
+            },
+            "tagName": {
+                "defaultValue": "virtualMachineStopStart",
+                "type": "String"
+            },
+            "tagValue": {
+                "defaultValue": "included",
+                "type": "String"
+            }
+        },
+        "staticResults": {
+        },
+        "triggers": {
+            "Recurrence": {
+                "evaluatedRecurrence": {
+                    "frequency": "Week",
+                    "interval": 1,
+                    "schedule": {
+                        "hours": [
+                            "7",
+                            "18"
+                        ],
+                        "minutes": [
+                            30
+                        ],
+                        "weekDays": [
+                            "Monday",
+                            "Tuesday",
+                            "Wednesday",
+                            "Thursday",
+                            "Friday"
+                        ]
+                    },
+                    "timeZone": "GMT Standard Time"
+                },
+                "recurrence": {
+                    "frequency": "Week",
+                    "interval": 1,
+                    "schedule": {
+                        "hours": [
+                            "7",
+                            "18"
+                        ],
+                        "minutes": [
+                            0
+                        ],
+                        "weekDays": [
+                            "Monday",
+                            "Tuesday",
+                            "Wednesday",
+                            "Thursday",
+                            "Friday"
+                        ]
+                    },
+                    "timeZone": "GMT Standard Time"
+                },
+                "type": "Recurrence"
+            }
+        }
+    },
+    "parameters": {
+        "$connections": {
+            "value": {}
+        }
+    }
+}
