@@ -1,0 +1,237 @@
+{
+    "definition": {
+        "$schema": "https://schema.management.azure.com/providers/Microsoft.Logic/schemas/2016-06-01/workflowdefinition.json#",
+        "actions": {
+            "Filter_everything_but_the_Fabric_Capacities": {
+                "inputs": {
+                    "from": "@body('Get_a_list_of_all_resources_tagged_to_be_managed')['value']",
+                    "where": "@equals(item()['type'],'Microsoft.Fabric/capacities')"
+                },
+                "runAfter": {
+                    "Get_a_list_of_all_resources_tagged_to_be_managed": [
+                        "Succeeded"
+                    ]
+                },
+                "type": "Query"
+            },
+            "For_Each_Capacity": {
+                "actions": {
+                    "Get_Fabric_Capacity_Status": {
+                        "inputs": {
+                            "authentication": {
+                                "identity": "@{parameters('managedId')}",
+                                "type": "ManagedServiceIdentity"
+                            },
+                            "method": "GET",
+                            "uri": "https://management.azure.com@{items('For_Each_Capacity')['id']}?api-version=2023-11-01"
+                        },
+                        "runtimeConfiguration": {
+                            "contentTransfer": {
+                                "transferMode": "Chunked"
+                            }
+                        },
+                        "type": "Http"
+                    },
+                    "Parse_Fabric_Capacity_Status": {
+                        "inputs": {
+                            "content": "@body('Get_Fabric_Capacity_Status')",
+                            "schema": {
+                                "properties": {
+                                    "properties": {
+                                        "properties": {
+                                            "state": {
+                                                "type": "string"
+                                            }
+                                        },
+                                        "type": "object"
+                                    }
+                                },
+                                "type": "object"
+                            }
+                        },
+                        "runAfter": {
+                            "Get_Fabric_Capacity_Status": [
+                                "Succeeded"
+                            ]
+                        },
+                        "type": "ParseJson"
+                    },
+                    "Condition": {
+                        "actions": {
+                            "Suspend_Fabric_Capacity": {
+                                "inputs": {
+                                    "authentication": {
+                                        "identity": "@{parameters('managedId')}",
+                                        "type": "ManagedServiceIdentity"
+                                    },
+                                    "method": "POST",
+                                    "uri": "https://management.azure.com@{items('For_Each_Capacity')['id']}/suspend?api-version=2023-11-01"
+                                },
+                                "runtimeConfiguration": {
+                                    "contentTransfer": {
+                                        "transferMode": "Chunked"
+                                    }
+                                },
+                                "type": "Http"
+                            }
+                        },
+                        "expression": {
+                            "and": [
+                                {
+                                    "equals": [
+                                        "@body('Parse_Fabric_Capacity_Status')['properties']['state']",
+                                        "Active"
+                                    ]
+                                }
+                            ]
+                        },
+                        "runAfter": {
+                            "Parse_Fabric_Capacity_Status": [
+                                "Succeeded"
+                            ]
+                        },
+                        "type": "If"
+                    }
+                },
+                "foreach": "@body('Process_just_the_Capacities')",
+                "runAfter": {
+                    "Process_just_the_Capacities": [
+                        "Succeeded"
+                    ]
+                },
+                "type": "Foreach"
+            },
+            "Get_a_list_of_all_resources_tagged_to_be_managed": {
+                "inputs": {
+                    "authentication": {
+                        "identity": "@{parameters('managedId')}",
+                        "type": "ManagedServiceIdentity"
+                    },
+                    "method": "GET",
+                    "uri": "https://management.azure.com/subscriptions/@{parameters('subscriptionId')}/resources?api-version=2021-04-01&$filter=tagName eq '@{parameters('tagName')}' and tagValue eq '@{parameters('tagValue')}'"
+                },
+                "runAfter": {},
+                "runtimeConfiguration": {
+                    "contentTransfer": {
+                        "transferMode": "Chunked"
+                    }
+                },
+                "type": "Http"
+            },
+            "Process_just_the_Capacities": {
+                "inputs": {
+                    "content": "@body('Filter_everything_but_the_Fabric_Capacities')",
+                    "schema": {
+                        "items": {
+                            "properties": {
+                                "id": {
+                                    "type": "string"
+                                },
+                                "location": {
+                                    "type": "string"
+                                },
+                                "name": {
+                                    "type": "string"
+                                },
+                                "tags": {
+                                    "type": "object"
+                                },
+                                "type": {
+                                    "type": "string"
+                                }
+                            },
+                            "required": [
+                                "id",
+                                "name",
+                                "type",
+                                "location"
+                            ],
+                            "type": "object"
+                        },
+                        "type": "array"
+                    }
+                },
+                "runAfter": {
+                    "Filter_everything_but_the_Fabric_Capacities": [
+                        "Succeeded"
+                    ]
+                },
+                "type": "ParseJson"
+            }
+        },
+        "contentVersion": "1.0.0.0",
+        "outputs": {},
+        "parameters": {
+            "$connections": {
+                "defaultValue": {},
+                "type": "Object"
+            },
+            "managedId": {
+                "defaultValue": "[REPLACE WITH THE FULL ID OF YOUR MANAGED IDENTITY]",
+                "type": "String"
+            },
+            "subscriptionId": {
+                "defaultValue": "[REPLACE WITH YOUR SUBSCRIPTION ID]",
+                "type": "String"
+            },
+            "tagName": {
+                "defaultValue": "fabricCapacityPause",
+                "type": "String"
+            },
+            "tagValue": {
+                "defaultValue": "included",
+                "type": "String"
+            }
+        },
+        "triggers": {
+            "Recurrence": {
+                "evaluatedRecurrence": {
+                    "frequency": "Week",
+                    "interval": 1,
+                    "schedule": {
+                        "hours": [
+                            "18"
+                        ],
+                        "minutes": [
+                            30
+                        ],
+                        "weekDays": [
+                            "Monday",
+                            "Tuesday",
+                            "Wednesday",
+                            "Thursday",
+                            "Friday"
+                        ]
+                    },
+                    "timeZone": "GMT Standard Time"
+                },
+                "recurrence": {
+                    "frequency": "Week",
+                    "interval": 1,
+                    "schedule": {
+                        "hours": [
+                            "18"
+                        ],
+                        "minutes": [
+                            0
+                        ],
+                        "weekDays": [
+                            "Monday",
+                            "Tuesday",
+                            "Wednesday",
+                            "Thursday",
+                            "Friday"
+                        ]
+                    },
+                    "timeZone": "GMT Standard Time"
+                },
+                "type": "Recurrence"
+            }
+        }
+    },
+    "parameters": {
+        "$connections": {
+            "value": {}
+        }
+    }
+}
